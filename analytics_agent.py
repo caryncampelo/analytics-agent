@@ -1,5 +1,6 @@
 import json
 import os
+import base64
 from datetime import datetime, timedelta
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
@@ -11,34 +12,33 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# ── Configuration ─────────────────────────────────────────────
-KEY_FILE   = "/Users/caryncampelo/Desktop/google cloud/my-analytics-agent-500914-c384bf6480cc.json"
-PROPERTY_ID = "543326297"
-EMAIL_TO    = "caryn.campelo@gmail.com"
-
-# Gmail: use an App Password (not your regular password)
-# Generate one at: myaccount.google.com/apppasswords
+# ── Configuration (reads from GitHub Secrets) ─────────────────
+PROPERTY_ID    = "543326297"
+EMAIL_TO       = "caryn.campelo@gmail.com"
 EMAIL_FROM     = "caryn.campelo@gmail.com"
-EMAIL_PASSWORD = "sqkbfsnyodksirku"   # <-- fill this in
+EMAIL_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
 # ─────────────────────────────────────────────────────────────
 
-
-def fetch_ga4_data():
-    credentials = service_account.Credentials.from_service_account_file(
-        KEY_FILE,
+def get_ga4_credentials():
+    key_b64 = os.environ["GA4_KEY_JSON"]
+    key_json = base64.b64decode(key_b64).decode("utf-8")
+    key_dict = json.loads(key_json)
+    return service_account.Credentials.from_service_account_info(
+        key_dict,
         scopes=["https://www.googleapis.com/auth/analytics.readonly"]
     )
+
+def fetch_ga4_data():
+    credentials = get_ga4_credentials()
     client = BetaAnalyticsDataClient(credentials=credentials)
 
     today = datetime.today()
-    last_monday = today - timedelta(days=today.weekday() + 7)
-    last_sunday = last_monday + timedelta(days=6)
+    yesterday = today - timedelta(days=1)
     date_range = DateRange(
-        start_date=last_monday.strftime("%Y-%m-%d"),
-        end_date=last_sunday.strftime("%Y-%m-%d")
+        start_date=yesterday.strftime("%Y-%m-%d"),
+        end_date=yesterday.strftime("%Y-%m-%d")
     )
 
-    # --- Overall metrics ---
     overview = client.run_report(RunReportRequest(
         property=f"properties/{PROPERTY_ID}",
         date_ranges=[date_range],
@@ -51,13 +51,12 @@ def fetch_ga4_data():
     ))
 
     row = overview.rows[0].metric_values
-    sessions   = int(row[0].value)
-    users      = int(row[1].value)
-    bounce     = round(float(row[2].value) * 100, 1)
-    avg_dur_s  = int(float(row[3].value))
-    avg_dur    = f"{avg_dur_s // 60}m {avg_dur_s % 60}s"
+    sessions  = int(row[0].value)
+    users     = int(row[1].value)
+    bounce    = round(float(row[2].value) * 100, 1)
+    avg_dur_s = int(float(row[3].value))
+    avg_dur   = f"{avg_dur_s // 60}m {avg_dur_s % 60}s"
 
-    # --- Top pages ---
     pages_report = client.run_report(RunReportRequest(
         property=f"properties/{PROPERTY_ID}",
         date_ranges=[date_range],
@@ -67,14 +66,10 @@ def fetch_ga4_data():
     ))
 
     top_pages = [
-        {
-            "page": r.dimension_values[0].value,
-            "sessions": int(r.metric_values[0].value)
-        }
+        {"page": r.dimension_values[0].value, "sessions": int(r.metric_values[0].value)}
         for r in pages_report.rows
     ]
 
-    # --- Traffic sources ---
     sources_report = client.run_report(RunReportRequest(
         property=f"properties/{PROPERTY_ID}",
         date_ranges=[date_range],
@@ -84,15 +79,12 @@ def fetch_ga4_data():
     ))
 
     traffic_sources = [
-        {
-            "source": r.dimension_values[0].value,
-            "sessions": int(r.metric_values[0].value)
-        }
+        {"source": r.dimension_values[0].value, "sessions": int(r.metric_values[0].value)}
         for r in sources_report.rows
     ]
 
     return {
-        "week": f"{last_monday.strftime('%b %d')} – {last_sunday.strftime('%b %d, %Y')}",
+        "date": yesterday.strftime("%A, %B %d %Y"),
         "sessions": sessions,
         "users": users,
         "bounce_rate": bounce,
@@ -103,13 +95,13 @@ def fetch_ga4_data():
 
 
 def generate_summary(data):
-    client = anthropic.Anthropic()   # reads ANTHROPIC_API_KEY from environment
+    client = anthropic.Anthropic()
 
     prompt = f"""
-You are a friendly analytics assistant. Write a concise, plain-English weekly 
-website analytics summary for a non-technical website owner. 
+You are a friendly analytics assistant. Write a concise, plain-English daily 
+website analytics summary for a non-technical website owner.
 
-Here is last week's data ({data['week']}):
+Here is yesterday's data ({data['date']}):
 - Sessions: {data['sessions']}
 - Unique visitors: {data['users']}
 - Bounce rate: {data['bounce_rate']}%
@@ -117,18 +109,17 @@ Here is last week's data ({data['week']}):
 - Top pages: {json.dumps(data['top_pages'], indent=2)}
 - Traffic sources: {json.dumps(data['traffic_sources'], indent=2)}
 
-Write 3–4 short paragraphs:
-1. A headline summary of how the week went overall
-2. What content performed best and why it might have
-3. Where traffic came from and what that means
-4. One concrete suggestion for next week
+Write 3 short paragraphs:
+1. A headline summary of how yesterday went overall
+2. What content performed best and where traffic came from
+3. One small actionable suggestion for today
 
-Keep it warm and actionable. No bullet points — just friendly paragraphs.
+Keep it warm, concise, and encouraging. No bullet points — just friendly paragraphs.
 """
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=600,
+        max_tokens=500,
         messages=[{"role": "user", "content": prompt}]
     )
     return message.content[0].text
@@ -142,7 +133,7 @@ def send_email(subject, body):
 
     html = f"""
     <html><body style="font-family: sans-serif; max-width: 600px; margin: auto; color: #333;">
-      <h2 style="color: #185FA5;">📊 Weekly site report</h2>
+      <h2 style="color: #185FA5;">Daily site report</h2>
       <p style="color: #888; font-size: 13px;">Auto-generated by your analytics agent</p>
       <hr style="border: none; border-top: 1px solid #eee;">
       {"".join(f"<p>{para}</p>" for para in body.split(chr(10)) if para.strip())}
@@ -166,7 +157,7 @@ if __name__ == "__main__":
     print("Generating AI summary...")
     summary = generate_summary(data)
 
-    week = data['week']
-    subject = f"Your site analytics: {week}"
+    date = data['date']
+    subject = f"Your site analytics: {date}"
     send_email(subject, summary)
     print("Done!")
