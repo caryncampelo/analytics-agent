@@ -1,0 +1,29 @@
+name: Daily analytics report
+
+on:
+  schedule:
+    - cron: '0 9 * * *'  # runs every day at 9:00 AM UTC (5:00 AM ET)
+  workflow_dispatch:       # lets you trigger it manually from GitHub too
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install google-analytics-data anthropic
+
+      - name: Run analytics agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GA4_KEY_JSON: ${{ secrets.GA4_KEY_JSON }}
+        run: python analytics_agent_final.py
