@@ -26,4 +26,4 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GA4_KEY_JSON: ${{ secrets.GA4_KEY_JSON }}
-        run: python analytics_agent_final.py
+        run: python analytics_agent.py
