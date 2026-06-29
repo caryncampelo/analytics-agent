@@ -1,0 +1,38 @@
+name: Daily dashboard update
+
+on:
+  schedule:
+    - cron: '30 9 * * *'  # runs at 9:30 AM UTC daily (30 min after the email report)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-dashboard:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install google-analytics-data
+
+      - name: Generate dashboard
+        env:
+          GA4_KEY_JSON: ${{ secrets.GA4_KEY_JSON }}
+        run: python generate_dashboard.py
+
+      - name: Deploy to GitHub Pages
+        run: |
+          git config user.name "analytics-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add index.html
+          git diff --staged --quiet || git commit -m "Update dashboard $(date -u '+%Y-%m-%d')"
+          git push
