@@ -50,6 +50,9 @@ def fetch_ga4_data():
         ]
     ))
 
+    if not overview.rows:
+    print("No data returned from GA4 for this date range. Skipping.")
+    exit(0)
     row = overview.rows[0].metric_values
     sessions  = int(row[0].value)
     users     = int(row[1].value)
